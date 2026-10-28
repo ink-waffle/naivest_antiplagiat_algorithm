@@ -4,82 +4,61 @@ import io
 import re
 
 
-# Функция чтения файла
-def read_file(file_path):
-    file = []
-    f = io.open(file_path, 'r', encoding='utf-8')
-    for string in f:
-        string = string.strip()
-        if string != '':
-            file.append(string)
+# Интерпретатор Brainfuck: 8-битные ячейки, лента растёт вправо, EOF читается как 0
+def run(program, data):
+    # Повторы + - < > сжимаем в одну команду, для скобок заранее находим пару
+    code, stack = [], []
+    for op in re.findall(r'\++|-+|>+|<+|[\[\].,]', program):
+        if op[0] in '+-':
+            code.append(('+', len(op) if op[0] == '+' else -len(op)))
+        elif op[0] in '<>':
+            code.append(('>', len(op) if op[0] == '>' else -len(op)))
+        elif op == '[':
+            stack.append(len(code))
+            code.append(['[', 0])
+        elif op == ']':
+            start = stack.pop()
+            code[start][1] = len(code)
+            code.append((']', start))
+        else:
+            code.append((op, 0))
 
-    return file
-
-
-# препроцессинг файла
-def preprocess(file):
-    # Удаляем знаки пунктуации
-    file = [re.sub(r'[^\w\s]', '', string) for string in file if
-            string.count('"') == string.count("'") == string.count('#') == 0]
-
-    # Переводим всё в нижний регистр
-    file = [string.lower() for string in file]
-
-    # Удаляем всё, что находится внутри квадратных и фигурных скобок
-    file = [re.sub(r"\[.*\]|\{.*\}", "", string) for string in file]
-
-    # Удаляем нестандартные буквы, которые не входят в ascii
-    file = [''.join([ch for ch in string if ch.isascii()]).strip() for string in file]
-
-    # Убираем пустые строки
-    file = [string for string in file if string != '']
-    return file
-
-
-# Расстояние Левенштейна между двумя строками
-def compare(A, B):
-    # Вычисляем размер матрицы размером на 1 больше
-    len_a, len_b = len(A) + 1, len(B) + 1
-    # Создаем ее
-    D = [[float('inf') for _ in range(len_b)] for _ in range(len_a)]
-    # Нумеруем по строкам и вертикалям
-    for i in range(len_a):
-        D[i][0] = i
-    for j in range(len_b):
-        D[0][j] = j
-
-        # Проходимся по всей матрице, заполняя очередной элемент из минимума из элемента левее, выше, левее и выше
-    for i in range(1, len_a):
-        for j in range(1, len_b):
-            c = A[i - 1] != B[j - 1]
-            D[i][j] = min(D[i - 1][j] + 1, D[i][j - 1] + 1, D[i - 1][j - 1] + c)
-
-        # Результатом будет самый правый нижний элемент
-    return D[len(A)][len(B)]
-
-# Функция получения меры схожести двух файлов
-def get_score(file1, file2):
-    file1 = read_file(file1)
-    file2 = read_file(file2)
-
-    file1 = preprocess(file1)
-    file2 = preprocess(file2)
-
-    len_f_1 = sum([len(w) for w in file1])
-    len_f_2 = sum([len(w) for w in file2])
-
-    return round(1 - compare(''.join(file1), ''.join(file2)) / (len_f_1 + len_f_2),2)
+    tape, ptr, pos, out = [0] * 100000, 0, 0, bytearray()
+    pc = 0
+    while pc < len(code):
+        op, arg = code[pc]
+        if op == '+':
+            tape[ptr] = (tape[ptr] + arg) % 256
+        elif op == '>':
+            ptr += arg
+            if ptr >= len(tape):
+                tape.extend([0] * len(tape))
+        elif op == '[':
+            if not tape[ptr]:
+                pc = arg
+        elif op == ']':
+            if tape[ptr]:
+                pc = arg
+        elif op == '.':
+            out.append(tape[ptr])
+        elif op == ',':
+            tape[ptr] = data[pos] if pos < len(data) else 0
+            pos += 1
+        pc += 1
+    return out.decode()
 
 
-# Основный блок, где читаются файлы для сравнения и записывается их результат
+# Основной блок: пары файлов подаются на вход compare.bf через байт 0xFF, его вывод записывается в файл
 def main(input_dir, output_dir):
-    files_to_check = [files.split() for files in read_file(input_dir)]
+    data = b''
+    for files in io.open(input_dir, 'r', encoding='utf-8'):
+        if files.strip() != '':
+            file1, file2 = files.split()
+            data += Path(file1).read_bytes() + b'\xff' + Path(file2).read_bytes() + b'\xff'
 
+    program = Path(__file__).with_name('compare.bf').read_text(encoding='utf-8')
     with open(output_dir, 'w') as out:
-        for pair in files_to_check:
-            file1, file2 = pair
-            out.write(str(get_score(file1, file2)))
-            out.write('\n')
+        out.write(run(program, data))
 
 
 if __name__ == '__main__':
